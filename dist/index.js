@@ -63,7 +63,7 @@ const typeDefs = `#graphql
     bookHostess(id: Int!): UpdateHostessBookingMutationResponse
   }
 
-  type Subscription  {
+  type Subscription{
     hostessBooked: Hostess
   }
 
@@ -156,14 +156,6 @@ const hostess_data = [
     hostess_7
 ];
 export const pubsub = new PubSub();
-// pubsub.publish('HOSTESS_BOOKED', {
-//   hostessBooked: {
-//     hostessID: 'ewer',
-//     sessionID: 1,
-//     timeStamp: 110
-//   },
-// }
-// )
 const resolvers = {
     Query: {
         hostesses: () => hostess_data,
@@ -182,7 +174,10 @@ const resolvers = {
             // change data
             var hostess = hostess_data.find(h => h.id === args.id);
             hostess.bookingStatus = 1;
-            pubsub.publish('HOSTESS_BOOKED', { hostessBooked: args });
+            console.log("hostess in mutation is " + JSON.stringify(hostess));
+            pubsub.publish('HOSTESS_BOOKED', {
+                hostessBooked: hostess
+            });
             return {
                 code: 'Yo',
                 success: true,
@@ -250,9 +245,18 @@ app.use('/graphql', cors(), bodyParser.json(),
 expressMiddleware(server, {
     context: async ({ req }) => ({ token: req.headers.token }),
 }));
-app.use('/login', (req, res) => {
-    const token = uid(12);
-    res.send({ token: token });
+// Cors allows cross origin requests, from this server to localhost client. In the pre flight check, the server will 
+// allow any time of cross origin request. 
+app.use('/login', cors(), express.json(), (req, res) => {
+    console.log(req.headers);
+    console.log(req.body);
+    if (req.body.username === "erica" && req.body.password === "yakuza") {
+        const token = uid(12);
+        res.send({ token: token });
+    }
+    else {
+        res.status(401).send({ message: "Sorry, you are not authorized to see this." });
+    }
 });
 // Modified server startup
 await new Promise((resolve) => httpServer.listen({ port: 4000 }, resolve));

@@ -9,6 +9,7 @@ import express from 'express';
 import http from 'http';
 import cors from 'cors';
 import bodyParser from 'body-parser';
+
 import { PubSub } from 'graphql-subscriptions';
 // A schema is a collection of type definitions (hence "typeDefs")
 // that together define the "shape" of queries that are executed against
@@ -65,12 +66,13 @@ const typeDefs = `#graphql
     bookHostess(id: Int!): UpdateHostessBookingMutationResponse
   }
 
-  type Subscription  {
+  type Subscription{
     hostessBooked: Hostess
   }
 
 
 `;
+
 
 const hostess_1 = {
   id: 1,
@@ -178,14 +180,7 @@ const hostess_data = [
 
 export const pubsub = new PubSub();
 
-// pubsub.publish('HOSTESS_BOOKED', {
-//   hostessBooked: {
-//     hostessID: 'ewer',
-//     sessionID: 1,
-//     timeStamp: 110
-//   },
-// }
-// )
+
 
 
 
@@ -209,7 +204,13 @@ const resolvers = {
       // change data
       var hostess =  hostess_data.find(h => h.id === args.id);
       hostess.bookingStatus = 1;
-      pubsub.publish('HOSTESS_BOOKED', { hostessBooked: args }); 
+      console.log("hostess in mutation is " + JSON.stringify(hostess));
+      pubsub.publish('HOSTESS_BOOKED', {
+        hostessBooked: 
+          hostess
+        
+      }
+      )
       return {
         code: 'Yo',
         success: true,
@@ -318,14 +319,27 @@ app.use(
   // expressMiddleware accepts the same arguments:
   // an Apollo Server instance and optional configuration options
   expressMiddleware(server, {
-    context: async ({ req }) => ({ token: req.headers.token }),
+    context: async ({ req }) => (
+      
+      { token: req.headers.token }
+      ),
   }),
 );
 
 
-app.use('/login', (req, res) => {
-  const token = uid(12);
-  res.send({ token: token })
+// Cors allows cross origin requests, from this server to localhost client. In the pre flight check, the server will 
+// allow any time of cross origin request. 
+app.use('/login', 
+cors<cors.CorsRequest>(), express.json(), (req, res) => {
+  console.log(req.headers)
+  console.log(req.body)
+  if (req.body.username === "erica" && req.body.password ==="yakuza"){
+      const token = uid(12);
+      res.send({ token: token })
+  } else {
+    res.status(401).send({message: "Sorry, you are not authorized to see this."});
+  }
+
 })
 
 
