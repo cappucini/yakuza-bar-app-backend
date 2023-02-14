@@ -9,6 +9,7 @@ import express from 'express';
 import http from 'http';
 import cors from 'cors';
 import bodyParser from 'body-parser';
+import { GraphQLError } from 'graphql';
 
 import { PubSub } from 'graphql-subscriptions';
 // A schema is a collection of type definitions (hence "typeDefs")
@@ -18,6 +19,8 @@ import { PubSub } from 'graphql-subscriptions';
 const { uid } = pkg;
 
 const typeDefs = `#graphql
+
+
   # Comments in GraphQL strings (such as this one) start with the hash (#) symbol.
 
   # This "Hostess" type defines the queryable fields for every hostess in our data source.
@@ -58,12 +61,27 @@ const typeDefs = `#graphql
     code: String!
     success: Boolean!
     message: String!
+    hostess: Hostess!
+  }
+
+
+  type UpdateWaitListMutationResponse implements MutationResponse {
+    code: String!
+    success: Boolean!
+    message: String!
+    hostess: Hostess!
   }
 
 
   # Mutation 
   type Mutation {
     bookHostess(id: Int!): UpdateHostessBookingMutationResponse
+  }
+
+  # Mutation 
+
+  type Mutation {
+    bookWaitList(id: Int!): UpdateWaitListMutationResponse
   }
 
   type Subscription{
@@ -84,8 +102,6 @@ const hostess_1 = {
   imageUrl: 'Lin_Lin.png',
   hostessClub: 'LIN_LIN',
   bookingStatus: 0
-
-
 };
 
 const hostess_2 = {
@@ -178,19 +194,35 @@ const hostess_data = [
 ];
 
 
+const wait_list = [
+
+];
+
+
 export const pubsub = new PubSub();
 
 
 
-
-
 const resolvers = {
+
   Query: {
     hostesses: () => hostess_data,
     hostess(parents, args, contextValue, info) {
-      console.log("resolving hostess with argument" + args.id )
+      console.log("resolving hostess with argument" + args.id)
       return hostess_data.filter(h => h.id === args.id);
-    }
+    },
+
+    // adminExample: (parent, args, contextValue, info) => {
+    //   if (contextValue.authScope !== 'ADMIN') {
+    //     console.log("Not an admin")
+    //     throw new GraphQLError('not admin!', {
+    //       extensions: { code: 'UNAUTHENTICATED' },
+    //     });
+    //   }
+    // },
+
+
+
   },
 
   Subscription: {
@@ -201,20 +233,47 @@ const resolvers = {
 
   Mutation: {
     bookHostess: (parents, args, contextValue, info) => {
+      var hostess = hostess_data.find(h => h.id === args.id);
+
       // change data
-      var hostess =  hostess_data.find(h => h.id === args.id);
+      if (contextValue.token === null) {
+        throw new GraphQLError('Not allowed to book hostess!', {
+          extensions: { code: 'UNAUTHENTICATED' },
+        });
+      }
+      var hostess = hostess_data.find(h => h.id === args.id);
       hostess.bookingStatus = 1;
       console.log("hostess in mutation is " + JSON.stringify(hostess));
       pubsub.publish('HOSTESS_BOOKED', {
-        hostessBooked: 
+        hostessBooked:
           hostess
-        
       }
       )
       return {
         code: 'Yo',
         success: true,
         message: "Booked",
+        hostess: hostess
+      };
+    },
+
+    bookWaitList: (parents, args, contextValue, info) => {
+      const waitlistRecord = {
+        requester_token: contextValue.token,
+        hostess_requested: args.id,
+        timeStamp: new Date().getTime()
+      }
+      var hostess = hostess_data.find(h => h.id === args.id);
+
+      console.log("New record has: \nRequester Token: " + waitlistRecord.requester_token + "\nHostess Requested ID: " + 
+      waitlistRecord.hostess_requested+ "\nTime stamp added to queue: " + waitlistRecord.timeStamp);
+      wait_list.push(waitlistRecord);
+
+      return {
+        code: 'Added to wait list',
+        success: true,
+        message: "Added to wait list",
+        hostess: hostess
       };
     }
   },
@@ -248,6 +307,11 @@ console.log(`🚀  Server ready at: ${url}`);
 interface MyContext {
   token?: String;
 }
+// interface MyContext {
+//   // You can optionally create a TS interface to set up types
+//   // for your contextValue
+//   authScope?: String;
+// }
 
 // Required logic for integrating with Express
 const app = express();
@@ -277,13 +341,23 @@ const wsServer = new WebSocketServer({
   // Pass a different path here if app.use
   // serves expressMiddleware at a different path
   path: '/graphql',
-  // path: '/subscriptions',
+  context: async ({ req, res }) => {
+    // Get the user token from the headers.
 
+    // Try to retrieve a user with the token
+    const token = await getToken(req);
+    console.log("TOKEN IS + " + token)
+    // Add the user to the context
+    return { token: token };
+  },
 });
 
 // Hand in the schema we just created and have the
 // WebSocketServer start listening.
-const serverCleanup = useServer({ schema }, wsServer);
+const serverCleanup = useServer({
+  schema,
+
+}, wsServer);
 
 // ...
 const server = new ApolloServer<MyContext>({
@@ -304,7 +378,8 @@ const server = new ApolloServer<MyContext>({
   csrfPrevention: false,
   formatError: (formattedError, _) => {
     return formattedError
-  }
+  },
+
 });
 // Ensure we wait for our server to start
 await server.start();
@@ -319,28 +394,60 @@ app.use(
   // expressMiddleware accepts the same arguments:
   // an Apollo Server instance and optional configuration options
   expressMiddleware(server, {
-    context: async ({ req }) => (
-      
-      { token: req.headers.token }
-      ),
+      context: async ({ req, res }) => ({
+        token: await getToken(req),
+      }),
+
+    // context: async ({ req }) => (
+    //   { token: getToken(req) }
+    // ),
+    // context: async ({ req, res }) => {
+    //   // Get the user token from the headers.
+
+    //   // Try to retrieve a user with the token
+    //   const token = await getToken(req);
+
+    //   // Add the user to the context
+    //   return { token: token };
+    // },
+
   }),
+
 );
 
+function getToken(req) {
+  if (
+    req.headers.authorization &&
+    req.headers.authorization.split(" ")[0] === "Bearer"
+  ) {
+    return req.headers.authorization.split(" ")[1];
+  }
+  return null;
+}
 
 // Cors allows cross origin requests, from this server to localhost client. In the pre flight check, the server will 
-// allow any time of cross origin request. 
-app.use('/login', 
-cors<cors.CorsRequest>(), express.json(), (req, res) => {
-  console.log(req.headers)
-  console.log(req.body)
-  if (req.body.username === "erica" && req.body.password ==="yakuza"){
-      const token = uid(12);
-      res.send({ token: token })
-  } else {
-    res.status(401).send({message: "Sorry, you are not authorized to see this."});
-  }
+// allow any type of cross origin request. 
+app.use('/login',
+  cors<cors.CorsRequest>(), express.json(), (req, res) => {
+    // if (!req.headers || !req.headers.authorization) {
+    //   throw new Error('No authorization');
+    // }
+    console.log(req.headers)
+    console.log(req.body)
+    // if it is a valid set of login then
+    if (req.body.username === "erica" && req.body.password === "yakuza") {
+      if (getToken(req) === "" || getToken(req) === null) {
+        const token = uid(12);
+        req.headers.authorization = "Bearer " + token;
+        console.log("bearer in headers " + req.headers.authorization);
+      }
+      res.send({ token: getToken(req) })
 
-})
+    } else {
+      res.status(401).send({ message: "Sorry, you are not authorized to see this." });
+    }
+
+  })
 
 
 // Modified server startup
