@@ -10,6 +10,8 @@ import http from 'http';
 import cors from 'cors';
 import bodyParser from 'body-parser';
 import { GraphQLError } from 'graphql';
+import {sha256} from 'js-sha256';
+// 
 
 import { PubSub } from 'graphql-subscriptions';
 // A schema is a collection of type definitions (hence "typeDefs")
@@ -91,7 +93,7 @@ const typeDefs = `#graphql
 
 `;
 
-
+const hashed_tokens=[];
 const hostess_1 = {
   id: 1,
   name: "Lin Lin",
@@ -236,7 +238,7 @@ const resolvers = {
       var hostess = hostess_data.find(h => h.id === args.id);
 
       // change data
-      if (contextValue.token === null) {
+      if (contextValue.token === null || !hashed_tokens.includes(sha256(contextValue.token))) {
         throw new GraphQLError('Not allowed to book hostess!', {
           extensions: { code: 'UNAUTHENTICATED' },
         });
@@ -420,6 +422,7 @@ function getToken(req) {
     req.headers.authorization &&
     req.headers.authorization.split(" ")[0] === "Bearer"
   ) {
+    // Need to validate if this is an apporpirate token
     return req.headers.authorization.split(" ")[1];
   }
   return null;
@@ -439,6 +442,7 @@ app.use('/login',
       if (getToken(req) === "" || getToken(req) === null) {
         const token = uid(12);
         req.headers.authorization = "Bearer " + token;
+        hashed_tokens.push(sha256(token));
         console.log("bearer in headers " + req.headers.authorization);
       }
       res.send({ token: getToken(req) })
